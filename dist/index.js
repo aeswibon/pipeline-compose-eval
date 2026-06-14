@@ -46566,16 +46566,25 @@ function loadPipelineFromFile(filePath) {
 
 
 
-function withResolvedStages(pipeline, pipelineKey) {
+function withResolvedStages(pipeline, pipelineKey, lenientNeeds = false) {
     const defaultGroup = pipeline.group ?? pipelineKey;
+    const ordered = lenientNeeds ? sortStagesLenient(pipeline.stages) : sortStages(pipeline.stages);
     return {
         ...pipeline,
-        stages: sortStages(pipeline.stages).map((stage) => ({
+        stages: ordered.map((stage) => ({
             ...stage,
             resolvedGroup: resolveStageGroup(stage, defaultGroup, pipelineKey),
             pipelineKey,
         })),
     };
+}
+function sortStagesLenient(stages) {
+    try {
+        return sortStages(stages);
+    }
+    catch {
+        return stages;
+    }
 }
 function pipeline_resolve_pipelineDocumentToList(doc) {
     if (!isPipelineV2(doc)) {
@@ -46604,13 +46613,13 @@ function assertUniqueStageIds(pipelines) {
         }
     }
 }
-function pipeline_resolve_mergePipelines(pipelines) {
+function pipeline_resolve_mergePipelines(pipelines, options = {}) {
     const ordered = sortPipelineDocuments(pipelines);
     assertUniqueStageIds(ordered);
     const stages = [];
     const multi = ordered.length > 1;
     for (const pipeline of ordered) {
-        const resolved = withResolvedStages(pipeline, multi ? pipeline.name : undefined);
+        const resolved = withResolvedStages(pipeline, multi ? pipeline.name : undefined, options.lenientNeeds);
         stages.push(...resolved.stages);
     }
     const primary = ordered[0];
@@ -46626,6 +46635,16 @@ function pipeline_resolve_mergePipelines(pipelines) {
         companion_workflows: companion.length > 0 ? companion : undefined,
         stages,
     };
+}
+function pipeline_resolve_resolvePipelineDocumentForReport(doc) {
+    const merged = pipeline_resolve_mergePipelines(pipeline_resolve_pipelineDocumentToList(doc), { lenientNeeds: true });
+    merged.schemaVersion = isPipelineV2(doc) ? 2 : 1;
+    if (isPipelineV2(doc) && doc.companion_workflows?.length) {
+        merged.companion_workflows = [
+            ...new Set([...(merged.companion_workflows ?? []), ...doc.companion_workflows]),
+        ];
+    }
+    return merged;
 }
 function pipeline_resolve_resolvePipelineDocument(doc) {
     const merged = pipeline_resolve_mergePipelines(pipeline_resolve_pipelineDocumentToList(doc));
@@ -46692,6 +46711,29 @@ function validatePipelineDocument(doc) {
     assertV2Document(doc);
     validateV2Document(doc);
     return resolvePipelineDocument(doc);
+}
+/** Load pipeline for validate/simulate without failing early on unknown needs (reported as issues instead). */
+function validatePipelineDocumentForReport(doc) {
+    assertV2Document(doc);
+    assertSchema('pipeline v2', validateV2, doc);
+    for (const def of Object.values(doc.pipelines)) {
+        validator_assertUniqueStageIds(def.stages);
+    }
+    return resolvePipelineDocumentForReport(doc);
+}
+function validatePipelineDocumentsForReport(docs) {
+    const pipelines = [];
+    for (const doc of docs) {
+        assertV2Document(doc);
+        assertSchema('pipeline v2', validateV2, doc);
+        for (const def of Object.values(doc.pipelines)) {
+            validator_assertUniqueStageIds(def.stages);
+        }
+        pipelines.push(...pipelineDocumentToList(doc));
+    }
+    const merged = mergePipelines(pipelines, { lenientNeeds: true });
+    merged.schemaVersion = 2;
+    return merged;
 }
 function validatePipelineDocuments(docs) {
     const pipelines = [];
@@ -46999,6 +47041,22 @@ function collectPipelineIssues(pipeline, options = {}) {
     }
     return issues;
 }
+function collectNeedsIssues(stages) {
+    const ids = new Set(stages.map((stage) => stage.id));
+    const issues = [];
+    for (const stage of stages) {
+        for (const dep of stage.needs ?? []) {
+            if (!ids.has(dep)) {
+                issues.push({
+                    level: 'error',
+                    code: 'needs.unknown',
+                    message: `Stage "${stage.id}" needs unknown stage "${dep}"`,
+                });
+            }
+        }
+    }
+    return issues;
+}
 function findOrphanWorkflows(repoRoot, pipeline) {
     const root = path.resolve(repoRoot);
     const workflowsDir = path.join(root, '.github', 'workflows');
@@ -47027,6 +47085,7 @@ function findOrphanWorkflows(repoRoot, pipeline) {
 }
 function buildValidateReport(pipeline, options = {}) {
     const issues = collectPipelineIssues(pipeline, options);
+    issues.push(...collectNeedsIssues(pipeline.stages));
     if (options.repoRoot) {
         issues.push(...collectDeprecationIssues(pipeline, options.repoRoot));
     }
@@ -47102,7 +47161,7 @@ function formatValidateReport(report) {
 function validateReportExitCode(report) {
     return report.issues.some((issue) => issue.level === 'error') ? 1 : 0;
 }
-function serializeValidateReport(report) {
+function serializeValidateReport(report, simulation) {
     return JSON.stringify({
         ok: validateReportExitCode(report) === 0,
         pipeline: {
@@ -47117,6 +47176,7 @@ function serializeValidateReport(report) {
                 pipelineKey: stage.pipelineKey,
             })),
         },
+        ...(simulation ? { simulation } : {}),
         issues: report.issues,
     }, null, 2);
 }
@@ -47127,6 +47187,7 @@ const STAGE_IN_MESSAGE = /(?:Stage|stage) "([^"]+)"/;
 const ERROR_SUMMARY_BY_CODE = {
     'workflow.missing': 'missing workflow file',
     'stage.repo-invalid': 'invalid repo slug',
+    'needs.unknown': 'unknown needs stage',
     'group.path-prefix': 'group/path mismatch',
     'export.missing': 'missing export step',
     'export.manual-upload-deprecated': 'deprecated manual export',
@@ -47137,6 +47198,7 @@ const ERROR_SUMMARY_BY_CODE = {
 const ERROR_CODE_PRIORITY = (/* unused pure expression or super */ null && ([
     'workflow.missing',
     'stage.repo-invalid',
+    'needs.unknown',
     'export.missing',
     'export.manual-upload-deprecated',
     'group.path-prefix',
@@ -47648,6 +47710,7 @@ function expressions_parseRepoSlug(slug) {
 }
 
 ;// CONCATENATED MODULE: ../core/dist/index.js
+
 
 
 
