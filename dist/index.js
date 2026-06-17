@@ -47643,7 +47643,7 @@ function formatValidateReport(report) {
 function validateReportExitCode(report) {
     return report.issues.some((issue) => issue.level === 'error') ? 1 : 0;
 }
-function serializeValidateReport(report, simulation) {
+function serializeValidateReport(report, simulation, options) {
     return JSON.stringify({
         ok: validateReportExitCode(report) === 0,
         pipeline: {
@@ -47658,6 +47658,7 @@ function serializeValidateReport(report, simulation) {
                 pipelineKey: stage.pipelineKey,
             })),
         },
+        ...(options?.mermaid !== undefined ? { mermaid: options.mermaid } : {}),
         ...(simulation ? { simulation } : {}),
         issues: report.issues,
     }, null, 2);
