@@ -22,10 +22,14 @@ Part of [pipeline-compose](https://github.com/aeswibon/pipeline-compose).
 
 ## How it works
 
-```text
-expression + context + github  →  eval action  →  result: "true" | "false"
-                                                      ↓
-                                            if: steps.id.outputs.result == 'true'
+```mermaid
+flowchart LR
+  expr["expression + context + github"]
+  eval["pipeline-compose-eval"]
+  result["result: true | false"]
+  gate["if: steps.*.outputs.result"]
+
+  expr --> eval --> result --> gate
 ```
 
 Same expression language as stage **`when:`** in pipeline YAML.
@@ -38,7 +42,7 @@ Same expression language as stage **`when:`** in pipeline YAML.
 
 ```yaml
 - id: gate
-  uses: aeswibon/pipeline-compose-eval@v1.15.0
+  uses: aeswibon/pipeline-compose-eval@v1.16.0
   with:
     expression: startsWith(github.ref, 'refs/tags/v')
     github: ${{ toJson(github) }}
@@ -55,7 +59,7 @@ Same expression language as stage **`when:`** in pipeline YAML.
 #   when: context.ci.passed == 'true'
 
 - id: gate
-  uses: aeswibon/pipeline-compose-eval@v1.15.0
+  uses: aeswibon/pipeline-compose-eval@v1.16.0
   with:
     expression: context.ci.passed == 'true'
     context: '{"ci":{"passed":"true"}}'
@@ -65,7 +69,7 @@ Example: [eval-conditional](https://github.com/aeswibon/pipeline-compose/tree/ma
 
 <!-- start usage -->
 ```yaml
-- uses: aeswibon/pipeline-compose-eval@v1.15.0
+- uses: aeswibon/pipeline-compose-eval@v1.16.0
   with:
     expression: startsWith(github.ref, 'refs/tags/v')
 ```
